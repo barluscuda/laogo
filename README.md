@@ -10,7 +10,7 @@ go get github.com/barluscuda/laogo
 ```go
 import "github.com/barluscuda/laogo"
 
-laogo.Version() // "v0.1.0"
+laogo.Version() // "v0.1.1"
 ```
 
 Requires Go 1.26+.
