@@ -42,7 +42,7 @@ func TestSendSMS_Success(t *testing.T) {
 	if !resp.Success {
 		t.Errorf("Success = false, want true")
 	}
-	if want := `{"data":{"header":"WNV-OTP","phoneNumber":"2012345678","message":"hello","token":"tok","usePackage":true}}`; string(gotBody) != want {
+	if want := `{"header":"WNV-OTP","phoneNumber":"2012345678","message":"hello","token":"tok","usePackage":true}`; string(gotBody) != want {
 		t.Errorf("request body = %s\nwant %s", gotBody, want)
 	}
 }
@@ -77,6 +77,56 @@ func TestSendSMS_NonJSONBody(t *testing.T) {
 	}
 	if want := "502 Bad Gateway"; !contains(err.Error(), want) {
 		t.Errorf("error %q does not contain %q", err.Error(), want)
+	}
+}
+
+// TestSendSMS_ObjectMessageBody reproduces a real NestJS validation error,
+// where `message` is a nested object containing an array of strings. Before the
+// Message type was made tolerant, this crashed json.Unmarshal and masked the
+// real failure behind a decode error.
+func TestSendSMS_ObjectMessageBody(t *testing.T) {
+	const body = `{"statusCode":400,"path":"/sms/package","method":"POST",` +
+		`"message":{"message":["header should not be empty","phoneNumber should not be empty"],"error":"Bad Request"}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL).SendSMS(context.Background(), validParams())
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %v, want *APIError (decode must not fail)", err)
+	}
+	if apiErr.HTTPStatus != http.StatusBadRequest {
+		t.Errorf("HTTPStatus = %d, want 400", apiErr.HTTPStatus)
+	}
+	if want := "header should not be empty"; !contains(apiErr.Message, want) {
+		t.Errorf("Message %q does not contain %q", apiErr.Message, want)
+	}
+}
+
+// TestMessageUnmarshal covers the shapes the API uses for the `message` field.
+func TestMessageUnmarshal(t *testing.T) {
+	cases := map[string]struct {
+		in   string
+		want string
+	}{
+		"string": {`"ok"`, "ok"},
+		"array":  {`["a","b"]`, "a; b"},
+		"object": {`{"message":["x","y"],"error":"Bad Request"}`, "x; y"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var m Message
+			if err := m.UnmarshalJSON([]byte(tc.in)); err != nil {
+				t.Fatalf("UnmarshalJSON(%s): %v", tc.in, err)
+			}
+			if string(m) != tc.want {
+				t.Errorf("got %q, want %q", m, tc.want)
+			}
+		})
 	}
 }
 
