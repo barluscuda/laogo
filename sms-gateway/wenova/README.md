@@ -6,7 +6,8 @@ A small, dependency-free Go client for sending SMS/OTP messages through the
 - `wenova` — high-level client with sensible defaults.
 - `wenova/api` — low-level HTTP client, input validation, and typed errors.
 
-For internal workflow and diagrams, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+For a step-by-step user guide, see [USER_GUIDE.md](./USER_GUIDE.md). For
+internal workflow and diagrams, see [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## Install
 
