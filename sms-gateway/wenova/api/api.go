@@ -64,8 +64,9 @@ type SendSMSParams struct {
 	UsePackage bool
 }
 
-// sendRequestData mirrors the JSON `data` envelope expected by the API.
-type sendRequestData struct {
+// sendRequest mirrors the flat JSON body expected by the API: the fields are
+// sent at the top level, not wrapped in a `data` envelope.
+type sendRequest struct {
 	Header      string `json:"header"`
 	PhoneNumber string `json:"phoneNumber"`
 	Message     string `json:"message"`
@@ -74,16 +75,46 @@ type sendRequestData struct {
 	UsePackage  bool   `json:"usePackage"`
 }
 
-type sendRequest struct {
-	Data sendRequestData `json:"data"`
-}
-
 // Response is the decoded API response body.
 type Response struct {
 	Code    int             `json:"code"`
-	Message string          `json:"message"`
+	Message Message         `json:"message"`
 	Success bool            `json:"success"`
 	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+// Message is the response `message` field. The API returns it as a plain string
+// on success, but on validation failure as an array of strings or a nested
+// object (e.g. {"message":["header should not be empty"],"error":"Bad Request"}).
+// UnmarshalJSON accepts any of these shapes and flattens them to a string, so a
+// real failure surfaces as an APIError rather than a JSON decode error.
+type Message string
+
+func (m *Message) UnmarshalJSON(b []byte) error {
+	// Plain string: the common (success) case.
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*m = Message(s)
+		return nil
+	}
+	// Array of strings: class-validator style messages.
+	var arr []string
+	if err := json.Unmarshal(b, &arr); err == nil {
+		*m = Message(strings.Join(arr, "; "))
+		return nil
+	}
+	// Nested object: recurse on its own "message" field (itself a Message, so it
+	// transitively handles the string/array forms).
+	var obj struct {
+		Message Message `json:"message"`
+	}
+	if err := json.Unmarshal(b, &obj); err == nil && obj.Message != "" {
+		*m = obj.Message
+		return nil
+	}
+	// Fallback: keep the raw JSON so nothing is silently lost.
+	*m = Message(strings.TrimSpace(string(b)))
+	return nil
 }
 
 // SendSMS sends an SMS/OTP message. It returns the decoded Response on success,
@@ -93,14 +124,14 @@ func (c *Client) SendSMS(ctx context.Context, p SendSMSParams) (*Response, error
 		return nil, err
 	}
 
-	body, err := json.Marshal(sendRequest{Data: sendRequestData{
+	body, err := json.Marshal(sendRequest{
 		Header:      p.Header,
 		PhoneNumber: p.PhoneNumber,
 		Message:     p.Message,
 		Token:       p.Token,
 		ScriptID:    p.ScriptID,
 		UsePackage:  p.UsePackage,
-	}})
+	})
 	if err != nil {
 		return nil, fmt.Errorf("wenova: marshal request: %w", err)
 	}
@@ -133,7 +164,7 @@ func (c *Client) SendSMS(ctx context.Context, p SendSMSParams) (*Response, error
 
 	// Wenova signals success/failure via the business code, not HTTP status.
 	if !isSuccess(out, resp.StatusCode) {
-		return nil, &APIError{Code: out.Code, Message: out.Message, HTTPStatus: resp.StatusCode}
+		return nil, &APIError{Code: out.Code, Message: string(out.Message), HTTPStatus: resp.StatusCode}
 	}
 	return &out, nil
 }
