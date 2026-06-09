@@ -1,5 +1,5 @@
 package laogo
 
 func Version() string {
-	return "1.0-beta"
+	return "v0.1.0"
 }
